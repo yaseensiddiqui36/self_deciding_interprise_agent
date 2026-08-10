@@ -214,6 +214,27 @@ def _render_result(result: dict) -> None:
         st.json(result)
 
 
+def _ask_and_store(question: str) -> bool:
+    """Runs the agent for `question` and appends the turn to session history.
+
+    Returns True on success. Renders its own error and returns False on failure,
+    rather than raising, so callers (form submit vs. example-question buttons) don't
+    need to duplicate error handling.
+    """
+    with st.spinner("Thinking..."):
+        try:
+            result, _mode_used = ask_agent(question)
+        except requests.RequestException as exc:
+            st.error(f"Failed to reach the agent API: {exc}")
+            return False
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"The agent failed to answer: {exc}")
+            return False
+
+    st.session_state["history"].append({"question": question, "result": result})
+    return True
+
+
 def render_ask_page() -> None:
     st.session_state.setdefault("history", [])
 
@@ -231,10 +252,16 @@ def render_ask_page() -> None:
 
     with st.sidebar:
         st.markdown("#### 💡 Try an example")
-        st.caption("Click a question to load it below.")
+        st.caption("Click a question to ask it directly.")
         for icon, q in EXAMPLE_QUESTIONS:
+            # Runs the question immediately on click rather than pre-filling the text
+            # box: writing into a `st.text_input`'s session_state from a *different*
+            # widget's callback, on a form that also uses clear_on_submit, is a known
+            # source of stale/ignored values in Streamlit once the form has already
+            # been submitted once. Running directly here sidesteps that entirely.
             if st.button(f"{icon}  {q}", key=f"ex_{hash(q)}", width='stretch'):
-                st.session_state["question_input"] = q
+                _ask_and_store(q)
+                st.rerun()
 
         st.divider()
         st.markdown("#### 🧠 Session memory")
@@ -276,23 +303,8 @@ def render_ask_page() -> None:
         st.warning("Type a question first.")
 
     if ask_clicked and question.strip():
-        with st.chat_message("user"):
-            st.write(question)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    result, mode_used = ask_agent(question)
-                except requests.RequestException as exc:
-                    st.error(f"Failed to reach the agent API: {exc}")
-                    st.stop()
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"The agent failed to answer: {exc}")
-                    st.stop()
-
-            _render_result(result)
-
-        st.session_state["history"].append({"question": question, "result": result})
+        if _ask_and_store(question):
+            st.rerun()
 
 
 # --------------------------------------------------------------------------- #
