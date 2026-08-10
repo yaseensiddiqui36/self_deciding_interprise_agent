@@ -22,10 +22,16 @@ def _first_non_null(a: str | None, b: str | None) -> str | None:
     return a or b
 
 
+def _merge_dicts(a: dict[str, float] | None, b: dict[str, float] | None) -> dict[str, float]:
+    """Reducer letting parallel branches (sql/retrieval) each add their own latency entry."""
+    return {**(a or {}), **(b or {})}
+
+
 class AgentState(TypedDict, total=False):
     question: str
 
     route: Route
+    reasoning: str  # router's rationale for the sql/document/hybrid decision
     tools_used: Annotated[list[str], _merge_unique]
 
     sql_query: str | None
@@ -44,3 +50,7 @@ class AgentState(TypedDict, total=False):
     max_retries: int
 
     failure_reason: Annotated[str | None, _first_non_null]
+
+    # Observability: per-node wall-clock timings (ms) and overall latency.
+    node_latencies_ms: Annotated[dict[str, float], _merge_dicts]
+    latency_ms: float

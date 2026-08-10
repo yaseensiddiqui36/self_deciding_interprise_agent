@@ -15,7 +15,9 @@ escalation rules, support procedures).
 Database schema available for "sql":
 {schema}
 
-Respond with ONLY one word: sql, document, or hybrid.
+Respond in exactly this format:
+ROUTE: <sql, document, or hybrid>
+REASONING: <one concise sentence explaining why this route was chosen>
 
 Question: {question}
 """

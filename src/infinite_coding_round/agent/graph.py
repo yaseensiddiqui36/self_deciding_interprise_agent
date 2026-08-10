@@ -9,7 +9,10 @@ Flow:
 
 from __future__ import annotations
 
+import functools
 import re
+import time
+from typing import Callable
 
 from langgraph.graph import END, StateGraph
 
@@ -37,18 +40,51 @@ def _clean_sql(raw: str) -> str:
     return text
 
 
+def _timed(node_name: str) -> Callable[[Callable[[AgentState], dict]], Callable[[AgentState], dict]]:
+    """Wraps a node so its wall-clock latency is recorded into node_latencies_ms.
+
+    Portfolio note: this is what powers the per-step latency breakdown surfaced in
+    the API response and UI, without cluttering each node's own logic with timing code.
+    """
+
+    def decorator(fn: Callable[[AgentState], dict]) -> Callable[[AgentState], dict]:
+        @functools.wraps(fn)
+        def wrapper(state: AgentState) -> dict:
+            start = time.perf_counter()
+            update = fn(state)
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+            update["node_latencies_ms"] = {node_name: elapsed_ms}
+            return update
+
+        return wrapper
+
+    return decorator
+
+
 # --------------------------------------------------------------------------- #
 # Nodes
 # --------------------------------------------------------------------------- #
 
 
+@_timed("router")
 def route_question(state: AgentState) -> dict:
     llm = get_llm()
     prompt = ROUTER_PROMPT.format(schema=SCHEMA_FOR_PROMPTS, question=state["question"])
-    raw = llm.invoke(prompt).content.strip().lower()
-    route = next((r for r in _VALID_ROUTES if r in raw), "hybrid")
+    raw = llm.invoke(prompt).content.strip()
+
+    route_match = re.search(r"ROUTE:\s*(sql|document|hybrid)", raw, re.IGNORECASE)
+    reasoning_match = re.search(r"REASONING:\s*(.+)", raw, re.IGNORECASE)
+
+    if route_match:
+        route = route_match.group(1).lower()
+    else:
+        lowered = raw.lower()
+        route = next((r for r in _VALID_ROUTES if r in lowered), "hybrid")
+    reasoning = reasoning_match.group(1).strip() if reasoning_match else raw.strip()
+
     return {
         "route": route,
+        "reasoning": reasoning,
         "tools_used": [],
         "retry_count": 0,
         "max_retries": settings.max_retries,
@@ -60,6 +96,7 @@ def route_question(state: AgentState) -> dict:
     }
 
 
+@_timed("run_sql")
 def run_sql(state: AgentState) -> dict:
     llm = get_llm()
     retry_context = ""
@@ -92,6 +129,7 @@ def run_sql(state: AgentState) -> dict:
     }
 
 
+@_timed("run_retrieval")
 def run_retrieval(state: AgentState) -> dict:
     passages = retrieve_passages(state["question"])
     seen: set[str] = set()
@@ -122,6 +160,7 @@ def _build_evidence_block(state: AgentState) -> str:
     return "\n\n".join(parts)
 
 
+@_timed("synthesize")
 def synthesize_answer(state: AgentState) -> dict:
     llm = get_llm()
     evidence = _build_evidence_block(state)
@@ -130,6 +169,7 @@ def synthesize_answer(state: AgentState) -> dict:
     return {"answer": answer}
 
 
+@_timed("validate")
 def validate_answer(state: AgentState) -> dict:
     # If the SQL step failed outright and there is no other evidence, fail validation directly.
     has_evidence = bool(state.get("sql_result_text")) or bool(state.get("retrieved_sources"))
@@ -227,5 +267,7 @@ def get_agent():
 
 def run_agent(question: str) -> AgentState:
     agent = get_agent()
+    start = time.perf_counter()
     final_state = agent.invoke({"question": question})
+    final_state["latency_ms"] = round((time.perf_counter() - start) * 1000, 1)
     return final_state

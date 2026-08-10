@@ -20,8 +20,8 @@ class _FakeLLM:
         self.sql_calls = 0
 
     def invoke(self, prompt: str) -> _FakeMessage:
-        if "Respond with ONLY one word" in prompt:
-            return _FakeMessage("sql")
+        if "You are a routing engine" in prompt:
+            return _FakeMessage("ROUTE: sql\nREASONING: The question asks for a row count.")
         if "SQL query:" in prompt:
             self.sql_calls += 1
             if self.sql_calls == 1:
@@ -43,6 +43,10 @@ def test_invalid_sql_triggers_single_retry_and_recovers(monkeypatch):
     assert final_state["sql_error"] is None
     assert final_state["sql_query"] == "SELECT COUNT(*) AS n FROM customers"
     assert final_state["validation_passed"] is True
+    assert final_state["reasoning"] == "The question asks for a row count."
+    assert final_state["latency_ms"] >= 0
+    assert "router" in final_state["node_latencies_ms"]
+    assert "run_sql" in final_state["node_latencies_ms"]
 
 
 def test_retry_budget_is_not_exceeded(monkeypatch):

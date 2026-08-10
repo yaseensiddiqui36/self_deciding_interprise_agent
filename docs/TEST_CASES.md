@@ -12,6 +12,12 @@ Run the automated, deterministic checks with:
 uv run python -m pytest tests/ -q
 ```
 
+Note: the abridged JSON snippets below predate two fields that are now always present
+on every response — `reasoning` (the router's rationale for the sql/document/hybrid
+choice) and `latency_ms` / `node_latencies_ms` (timing). They're omitted here only to
+keep the examples focused on routing/grounding behavior; see the main
+[README](../README.md#response-shape-post-ask) for the full current shape.
+
 ---
 
 ## 1. SQL-only question

@@ -26,6 +26,8 @@ if str(_SRC_DIR) not in sys.path:
 
 import streamlit as st
 
+from infinite_coding_round.ui.architecture_page import render as render_architecture_page
+
 # Secrets configured in Streamlit Cloud (Settings -> Secrets) are only exposed via
 # st.secrets, not as real environment variables. Promote them to env vars *before*
 # importing anything from infinite_coding_round, since Settings() reads env at import time.
@@ -43,52 +45,11 @@ API_BASE_URL = os.getenv("AGENT_API_URL", "http://127.0.0.1:8000")
 AGENT_MODE = os.getenv("AGENT_MODE", "auto")  # "api" | "direct" | "auto"
 
 EXAMPLE_QUESTIONS = [
-    "How many orders does customer Alice Chen have?",
-    "What is the refund window for furniture items?",
-    "Hassan Ali reported a noisy standing desk motor after 40 days. Is he eligible for a refund, and should this be escalated?",
-    "What is the CEO's stance on remote work?",
+    ("📦", "How many orders does customer Alice Chen have?"),
+    ("💰", "What is the refund window for furniture items?"),
+    ("⚠️", "Hassan Ali reported a noisy standing desk motor after 40 days. Is he eligible for a refund, and should this be escalated?"),
+    ("❓", "What is the CEO's stance on remote work?"),
 ]
-
-st.set_page_config(
-    page_title="Enterprise Data Agent",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.markdown(
-    """
-    <style>
-    .block-container { padding-top: 2rem; max-width: 1000px; }
-    .stChatMessage { border-radius: 12px; }
-    div[data-testid="stMetric"] {
-        background: rgba(127, 127, 127, 0.08);
-        border-radius: 10px;
-        padding: 0.6rem 0.8rem;
-    }
-    .agent-badge {
-        display: inline-block;
-        padding: 0.15rem 0.6rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin-right: 0.35rem;
-        background: rgba(99, 102, 241, 0.15);
-        color: rgb(99, 102, 241);
-    }
-    .source-chip {
-        display: inline-block;
-        padding: 0.1rem 0.5rem;
-        border-radius: 6px;
-        font-size: 0.72rem;
-        background: rgba(16, 185, 129, 0.12);
-        color: rgb(5, 150, 105);
-        margin: 0 0.25rem 0.25rem 0;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -121,6 +82,7 @@ def _call_direct(question: str) -> dict:
     state = run_agent(question)
     return {
         "answer": state.get("answer", ""),
+        "reasoning": state.get("reasoning", ""),
         "tools_used": state.get("tools_used", []),
         "generated_sql": state.get("sql_query"),
         "retrieved_sources": state.get("retrieved_sources", []),
@@ -128,6 +90,8 @@ def _call_direct(question: str) -> dict:
         "validation_result": state.get("validation_reason", ""),
         "validation_passed": state.get("validation_passed", False),
         "retry_count": state.get("retry_count", 0),
+        "latency_ms": state.get("latency_ms", 0.0),
+        "node_latencies_ms": state.get("node_latencies_ms", {}),
     }
 
 
@@ -148,120 +112,174 @@ def ask_agent(question: str) -> tuple[dict, str]:
 
 
 # --------------------------------------------------------------------------- #
-# Sidebar
+# Page setup + styling (shared across every page in the app)
 # --------------------------------------------------------------------------- #
 
-with st.sidebar:
-    st.markdown("### 📊 Enterprise Data Agent")
-    st.caption(
-        "Routes each question to SQL, document retrieval, or both — then validates "
-        "its own grounding and retries once automatically on failure."
+st.set_page_config(page_title="Enterprise Data Agent", page_icon="📊", layout="centered")
+
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2.5rem; max-width: 880px; }
+
+    .app-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.15rem; }
+    .app-header .icon { font-size: 2rem; line-height: 1; }
+    .app-header h1 { margin: 0; font-size: 1.7rem; font-weight: 700; }
+    .app-subtitle { color: var(--text-color, #6b7280); opacity: 0.85; margin-bottom: 1.6rem; font-size: 0.95rem; }
+
+    div[data-testid="stMetric"] {
+        background: rgba(99, 102, 241, 0.06);
+        border: 1px solid rgba(99, 102, 241, 0.15);
+        border-radius: 10px;
+        padding: 0.7rem 0.9rem;
+    }
+
+    .agent-badge {
+        display: inline-block;
+        padding: 0.2rem 0.65rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-right: 0.35rem;
+        background: rgba(99, 102, 241, 0.14);
+        color: rgb(99, 102, 241);
+    }
+    .source-chip {
+        display: inline-block;
+        padding: 0.12rem 0.55rem;
+        border-radius: 6px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        background: rgba(16, 185, 129, 0.12);
+        color: rgb(5, 150, 105);
+        margin-bottom: 0.35rem;
+    }
+
+    /* Sidebar example-question chips */
+    section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+        text-align: left;
+        justify-content: flex-start;
+        white-space: normal;
+        line-height: 1.35;
+        font-size: 0.85rem;
+        padding: 0.55rem 0.7rem;
+        border-radius: 10px;
+        border: 1px solid rgba(127, 127, 127, 0.25);
+    }
+    section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover {
+        border-color: rgb(99, 102, 241);
+        color: rgb(99, 102, 241);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+def render_ask_page() -> None:
+    st.markdown(
+        '<div class="app-header"><span class="icon">📊</span>'
+        "<h1>Self-Correcting Enterprise Data Agent</h1></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="app-subtitle">Ask a business question — the agent decides whether to query the '
+        "database, retrieve policy documents, or both, then validates its own answer and retries "
+        "once automatically if needed.</div>",
+        unsafe_allow_html=True,
     )
 
-    st.markdown("#### Try an example")
-    for q in EXAMPLE_QUESTIONS:
-        if st.button(q, key=f"ex_{hash(q)}", use_container_width=True):
-            st.session_state["pending_question"] = q
+    with st.sidebar:
+        st.markdown("#### 💡 Try an example")
+        st.caption("Click a question to load it below.")
+        for icon, q in EXAMPLE_QUESTIONS:
+            if st.button(f"{icon}  {q}", key=f"ex_{hash(q)}", use_container_width=True):
+                st.session_state["question_input"] = q
 
-    st.divider()
-    st.markdown("#### Session")
-    if st.button("Clear conversation", use_container_width=True):
-        st.session_state["history"] = []
-        st.rerun()
+        st.divider()
+        st.markdown("#### ⚙️ Backend")
+        mode_label = {
+            "api": f"FastAPI backend\n{API_BASE_URL}",
+            "direct": "In-process (standalone)",
+            "auto": "Auto (API → standalone fallback)",
+        }[AGENT_MODE]
+        st.code(mode_label, language="text")
+        if st.session_state.get("force_direct_mode"):
+            st.caption("⚠️ Backend unreachable — running standalone this session.")
 
-    st.divider()
-    mode_label = {
-        "api": f"FastAPI backend ({API_BASE_URL})",
-        "direct": "In-process (standalone)",
-        "auto": "Auto (API, falls back to standalone)",
-    }[AGENT_MODE]
-    st.caption(f"Mode: **{mode_label}**")
-    if st.session_state.get("force_direct_mode"):
-        st.caption("⚠️ Backend unreachable — running standalone this session.")
+    # A form so Enter submits directly (no Ctrl+Enter, no separate "click to enable
+    # the button" step).
+    with st.form("ask_form", clear_on_submit=False):
+        question = st.text_input(
+            "Your question",
+            key="question_input",
+            placeholder="Ask about orders, customers, refunds, escalation... (press Enter to ask)",
+        )
+        ask_clicked = st.form_submit_button("Ask", type="primary", use_container_width=True)
+
+    if ask_clicked and not question.strip():
+        st.warning("Type a question first.")
+
+    if ask_clicked and question.strip():
+        with st.chat_message("user"):
+            st.write(question)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    result, mode_used = ask_agent(question)
+                except requests.RequestException as exc:
+                    st.error(f"Failed to reach the agent API: {exc}")
+                    st.stop()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"The agent failed to answer: {exc}")
+                    st.stop()
+
+            st.write(result["answer"])
+
+            badges = " ".join(f'<span class="agent-badge">{t}</span>' for t in result["tools_used"])
+            if badges:
+                st.markdown(badges, unsafe_allow_html=True)
+
+            cols = st.columns(4)
+            cols[0].metric("Confidence", f"{result['confidence']:.2f}")
+            cols[1].metric("Retries", result["retry_count"])
+            cols[2].metric("Validation", "✅ Passed" if result["validation_passed"] else "❌ Failed")
+            cols[3].metric("Latency", f"{result.get('latency_ms', 0):.0f} ms")
+
+            if result.get("reasoning"):
+                with st.expander("🧭 Routing reasoning", expanded=False):
+                    st.write(result["reasoning"])
+
+            if result.get("generated_sql"):
+                with st.expander("🗄️ Generated SQL"):
+                    st.code(result["generated_sql"], language="sql")
+
+            if result.get("retrieved_sources"):
+                with st.expander(f"📄 Retrieved sources ({len(result['retrieved_sources'])})"):
+                    for src in result["retrieved_sources"]:
+                        st.markdown(f'<span class="source-chip">{src["source"]}</span>', unsafe_allow_html=True)
+                        st.caption(src["excerpt"])
+                        st.divider()
+
+            with st.expander("✅ Validation result"):
+                st.write(result["validation_result"])
+
+            if result.get("node_latencies_ms"):
+                with st.expander("⏱️ Latency breakdown"):
+                    st.bar_chart(result["node_latencies_ms"])
+
+            with st.expander("Raw JSON response"):
+                st.json(result)
 
 
 # --------------------------------------------------------------------------- #
-# Main chat area
+# Navigation
 # --------------------------------------------------------------------------- #
 
-st.title("Self-Correcting Enterprise Data Agent")
-st.caption("Ask a business question about customers, orders, refunds, or escalation policy.")
-
-if "history" not in st.session_state:
-    st.session_state["history"] = []
-
-for turn in st.session_state["history"]:
-    with st.chat_message(turn["role"]):
-        if turn["role"] == "user":
-            st.write(turn["content"])
-            continue
-
-        result = turn["result"]
-        st.write(result["answer"])
-
-        badges = " ".join(f'<span class="agent-badge">{t}</span>' for t in result["tools_used"])
-        if badges:
-            st.markdown(badges, unsafe_allow_html=True)
-
-        cols = st.columns(3)
-        cols[0].metric("Confidence", f"{result['confidence']:.2f}")
-        cols[1].metric("Retries", result["retry_count"])
-        cols[2].metric("Validation", "✅ Passed" if result["validation_passed"] else "❌ Failed")
-
-        if result.get("generated_sql"):
-            with st.expander("Generated SQL"):
-                st.code(result["generated_sql"], language="sql")
-
-        if result.get("retrieved_sources"):
-            with st.expander(f"Retrieved sources ({len(result['retrieved_sources'])})"):
-                for src in result["retrieved_sources"]:
-                    st.markdown(f'<span class="source-chip">{src["source"]}</span>', unsafe_allow_html=True)
-                    st.caption(src["excerpt"])
-                    st.divider()
-
-        with st.expander("Validation reasoning"):
-            st.write(result["validation_result"])
-
-
-pending = st.session_state.pop("pending_question", None)
-typed = st.chat_input("Ask about orders, customers, refunds, escalation...")
-question = pending or typed
-
-if question:
-    st.session_state["history"].append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.write(question)
-
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                result, mode_used = ask_agent(question)
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"The agent failed to answer: {exc}")
-                st.stop()
-
-        st.write(result["answer"])
-        badges = " ".join(f'<span class="agent-badge">{t}</span>' for t in result["tools_used"])
-        if badges:
-            st.markdown(badges, unsafe_allow_html=True)
-
-        cols = st.columns(3)
-        cols[0].metric("Confidence", f"{result['confidence']:.2f}")
-        cols[1].metric("Retries", result["retry_count"])
-        cols[2].metric("Validation", "✅ Passed" if result["validation_passed"] else "❌ Failed")
-
-        if result.get("generated_sql"):
-            with st.expander("Generated SQL"):
-                st.code(result["generated_sql"], language="sql")
-
-        if result.get("retrieved_sources"):
-            with st.expander(f"Retrieved sources ({len(result['retrieved_sources'])})"):
-                for src in result["retrieved_sources"]:
-                    st.markdown(f'<span class="source-chip">{src["source"]}</span>', unsafe_allow_html=True)
-                    st.caption(src["excerpt"])
-                    st.divider()
-
-        with st.expander("Validation reasoning"):
-            st.write(result["validation_result"])
-
-    st.session_state["history"].append({"role": "assistant", "result": result})
+pg = st.navigation(
+    [
+        st.Page(render_ask_page, title="Ask", icon="💬", default=True),
+        st.Page(render_architecture_page, title="Architecture & Tech Stack", icon="🏗️"),
+    ]
+)
+pg.run()
