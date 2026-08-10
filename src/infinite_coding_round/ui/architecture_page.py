@@ -196,7 +196,7 @@ def render() -> None:
     )
 
     st.markdown('<div class="section-eyebrow">System diagram</div>', unsafe_allow_html=True)
-    st.graphviz_chart(ARCHITECTURE_DOT, use_container_width=True)
+    st.graphviz_chart(ARCHITECTURE_DOT, width='stretch')
     st.caption(
         "Solid arrows = control/data flow. Dotted arrows = model/store dependencies. "
         "Dashed red arrows = the single automatic retry loop (execution or grounding failure)."

@@ -175,7 +175,48 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def _render_result(result: dict) -> None:
+    st.write(result["answer"])
+
+    badges = " ".join(f'<span class="agent-badge">{t}</span>' for t in result["tools_used"])
+    if badges:
+        st.markdown(badges, unsafe_allow_html=True)
+
+    cols = st.columns(4)
+    cols[0].metric("Confidence", f"{result['confidence']:.2f}")
+    cols[1].metric("Retries", result["retry_count"])
+    cols[2].metric("Validation", "✅ Passed" if result["validation_passed"] else "❌ Failed")
+    cols[3].metric("Latency", f"{result.get('latency_ms', 0):.0f} ms")
+
+    if result.get("reasoning"):
+        with st.expander("🧭 Routing reasoning", expanded=False):
+            st.write(result["reasoning"])
+
+    if result.get("generated_sql"):
+        with st.expander("🗄️ Generated SQL"):
+            st.code(result["generated_sql"], language="sql")
+
+    if result.get("retrieved_sources"):
+        with st.expander(f"📄 Retrieved sources ({len(result['retrieved_sources'])})"):
+            for src in result["retrieved_sources"]:
+                st.markdown(f'<span class="source-chip">{src["source"]}</span>', unsafe_allow_html=True)
+                st.caption(src["excerpt"])
+                st.divider()
+
+    with st.expander("✅ Validation result"):
+        st.write(result["validation_result"])
+
+    if result.get("node_latencies_ms"):
+        with st.expander("⏱️ Latency breakdown"):
+            st.bar_chart(result["node_latencies_ms"])
+
+    with st.expander("Raw JSON response"):
+        st.json(result)
+
+
 def render_ask_page() -> None:
+    st.session_state.setdefault("history", [])
+
     st.markdown(
         '<div class="app-header"><span class="icon">📊</span>'
         "<h1>Self-Correcting Enterprise Data Agent</h1></div>",
@@ -192,8 +233,15 @@ def render_ask_page() -> None:
         st.markdown("#### 💡 Try an example")
         st.caption("Click a question to load it below.")
         for icon, q in EXAMPLE_QUESTIONS:
-            if st.button(f"{icon}  {q}", key=f"ex_{hash(q)}", use_container_width=True):
+            if st.button(f"{icon}  {q}", key=f"ex_{hash(q)}", width='stretch'):
                 st.session_state["question_input"] = q
+
+        st.divider()
+        st.markdown("#### 🧠 Session memory")
+        st.caption(f"{len(st.session_state['history'])} question(s) this session.")
+        if st.button("🗑️ Clear session memory", width='stretch', disabled=not st.session_state["history"]):
+            st.session_state["history"] = []
+            st.rerun()
 
         st.divider()
         st.markdown("#### ⚙️ Backend")
@@ -206,15 +254,23 @@ def render_ask_page() -> None:
         if st.session_state.get("force_direct_mode"):
             st.caption("⚠️ Backend unreachable — running standalone this session.")
 
+    # Replay this session's conversation so far.
+    for turn in st.session_state["history"]:
+        with st.chat_message("user"):
+            st.write(turn["question"])
+        with st.chat_message("assistant"):
+            _render_result(turn["result"])
+
     # A form so Enter submits directly (no Ctrl+Enter, no separate "click to enable
-    # the button" step).
-    with st.form("ask_form", clear_on_submit=False):
+    # the button" step). clear_on_submit resets the input for the next question,
+    # since answered questions now persist above as session memory.
+    with st.form("ask_form", clear_on_submit=True):
         question = st.text_input(
             "Your question",
             key="question_input",
             placeholder="Ask about orders, customers, refunds, escalation... (press Enter to ask)",
         )
-        ask_clicked = st.form_submit_button("Ask", type="primary", use_container_width=True)
+        ask_clicked = st.form_submit_button("Ask", type="primary", width='stretch')
 
     if ask_clicked and not question.strip():
         st.warning("Type a question first.")
@@ -234,42 +290,9 @@ def render_ask_page() -> None:
                     st.error(f"The agent failed to answer: {exc}")
                     st.stop()
 
-            st.write(result["answer"])
+            _render_result(result)
 
-            badges = " ".join(f'<span class="agent-badge">{t}</span>' for t in result["tools_used"])
-            if badges:
-                st.markdown(badges, unsafe_allow_html=True)
-
-            cols = st.columns(4)
-            cols[0].metric("Confidence", f"{result['confidence']:.2f}")
-            cols[1].metric("Retries", result["retry_count"])
-            cols[2].metric("Validation", "✅ Passed" if result["validation_passed"] else "❌ Failed")
-            cols[3].metric("Latency", f"{result.get('latency_ms', 0):.0f} ms")
-
-            if result.get("reasoning"):
-                with st.expander("🧭 Routing reasoning", expanded=False):
-                    st.write(result["reasoning"])
-
-            if result.get("generated_sql"):
-                with st.expander("🗄️ Generated SQL"):
-                    st.code(result["generated_sql"], language="sql")
-
-            if result.get("retrieved_sources"):
-                with st.expander(f"📄 Retrieved sources ({len(result['retrieved_sources'])})"):
-                    for src in result["retrieved_sources"]:
-                        st.markdown(f'<span class="source-chip">{src["source"]}</span>', unsafe_allow_html=True)
-                        st.caption(src["excerpt"])
-                        st.divider()
-
-            with st.expander("✅ Validation result"):
-                st.write(result["validation_result"])
-
-            if result.get("node_latencies_ms"):
-                with st.expander("⏱️ Latency breakdown"):
-                    st.bar_chart(result["node_latencies_ms"])
-
-            with st.expander("Raw JSON response"):
-                st.json(result)
+        st.session_state["history"].append({"question": question, "result": result})
 
 
 # --------------------------------------------------------------------------- #
